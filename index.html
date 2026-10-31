@@ -40,10 +40,10 @@ window.STANDALONE = true;
   function boot(){
     if(ready)return ready;
     ready=(async function(){
-      if(!window.firebase||FIREBASE_CONFIG.apiKey==='ВСТАВЬТЕ')throw new Error('no-config');
-      firebase.initializeApp(FIREBASE_CONFIG);
-      try{await firebase.auth().signInAnonymously();}catch(e){}
-      var fs=firebase.firestore();
+      if(!window.firebase||FIREBASE_CONFIG.apiKey==='ВСТАВЬТЕ'){window.__fbErr='нет ключей в файле или не загрузился firebase';throw new Error('no-config');}
+      try{firebase.initializeApp(FIREBASE_CONFIG);}catch(e){window.__fbErr='init: '+(e.code||e.message);throw e;}
+      try{await firebase.auth().signInAnonymously();}catch(e){window.__fbErr='вход: '+(e.code||e.message);}
+      var fs;try{fs=firebase.firestore();}catch(e){window.__fbErr='firestore: '+(e.code||e.message);throw e;}
       return {collection:function(n){return wrapCol(fs.collection(COL_PREFIX+n));}};
     })();
     return ready;
@@ -408,7 +408,7 @@ async function removeOrder(id){
 
 async function init(){
   var db=null;
-  try{if(window.claude&&window.claude.use)db=await window.claude.use('db');}catch(e){db=null;}
+  try{if(window.claude&&window.claude.use)db=await window.claude.use('db');}catch(e){db=null;if(!window.__fbErr)window.__fbErr='подключение: '+(e&&(e.code||e.message));}
   if(db){
     mode='db';col=db.collection('orders');scol=db.collection('sellers');
     try{var us=await window.claude.use('user');isAdmin=!!(us&&await us.canEdit());}catch(e){isAdmin=false;}
@@ -431,7 +431,7 @@ async function init(){
     col.onSnapshot(function(snap){
       orders=snap.docs.map(function(d){return normalize(Object.assign({},d.data()||{},{id:d.id}));});
       render(false);
-    },function(){mode='local';loadLocal();render(true);});
+    },function(er){window.__fbErr=(window.__fbErr?window.__fbErr+'; ':'')+'база: '+((er&&(er.code||er.message))||'ошибка');mode='local';loadLocal();render(true);});
   }else{
     mode='local';loadLocal();render(true);
   }
@@ -579,7 +579,7 @@ function renderMain(){
   }
   $('#foot').textContent=mode==='db'
     ?'Заказы общие: их видят все, кто открыл эту страницу.'
-    :'Заказы хранятся только в этом браузере и на этом устройстве.';
+    :'Заказы хранятся только в этом браузере и на этом устройстве.'+' [v3'+(window.__fbErr?', причина: '+window.__fbErr:', причина не определена')+']';
   var rb=$('#resetbox');
   if(rb){
     if(me&&me.role==='owner')rb.innerHTML=resetAsk?'<span>Удалить ВСЕ заявки и уведомления? Это нельзя отменить.</span><button class="btn small danger" type="button" data-act="resetyes">Да, сбросить</button><button class="btn small" type="button" data-act="resetno">Отмена</button>':'<button class="btn small" type="button" data-act="reset">Сбросить все заявки</button>';
