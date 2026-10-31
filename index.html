@@ -1,0 +1,1145 @@
+<!doctype html>
+<html lang="ru"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#e30613">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="NURLIFE">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* ============ НАСТРОЙКИ: вставьте свои значения ============ */
+var FIREBASE_CONFIG = {
+  apiKey: "AIzaSyB2FQR0t3bvBFvkvuQlqbjyqrdArrJg9Ss",
+  authDomain: "nurlife-fefca.firebaseapp.com",
+  projectId: "nurlife-fefca",
+  storageBucket: "nurlife-fefca.firebasestorage.app",
+  messagingSenderId: "353495988966",
+  appId: "1:353495988966:web:75fdc95019a879074b1927"
+};
+var OWNER_PIN = "58213";      /* код владельца для кнопки «Войти как владелец»: поменяйте! */
+var COL_PREFIX = "nl_";      /* префикс коллекций, чтобы не пересекаться с другими приложениями в проекте */
+/* ============================================================ */
+window.STANDALONE = true;
+(function(){
+  function clean(d){return JSON.parse(JSON.stringify(d));}
+  function wrapDoc(r){return {id:r.id,
+    set:function(d){return r.set(clean(d));},
+    update:function(d){return r.update(clean(d));},
+    delete:function(){return r.delete();},
+    get:function(){return r.get();},
+    onSnapshot:function(a,b){return r.onSnapshot(a,b);}};}
+  function wrapQ(q){return {
+    orderBy:function(f,d){return wrapQ(q.orderBy(f,d));},
+    limit:function(n){return wrapQ(q.limit(n));},
+    get:function(){return q.get();},
+    onSnapshot:function(a,b){return q.onSnapshot(a,b);}};}
+  function wrapCol(c){var w=wrapQ(c);w.doc=function(id){return wrapDoc(id?c.doc(id):c.doc());};w.add=function(d){return c.add(clean(d));};return w;}
+  var ready=null;
+  function boot(){
+    if(ready)return ready;
+    ready=(async function(){
+      if(!window.firebase||FIREBASE_CONFIG.apiKey==='ВСТАВЬТЕ')throw new Error('no-config');
+      firebase.initializeApp(FIREBASE_CONFIG);
+      try{await firebase.auth().signInAnonymously();}catch(e){}
+      var fs=firebase.firestore();
+      return {collection:function(n){return wrapCol(fs.collection(COL_PREFIX+n));}};
+    })();
+    return ready;
+  }
+  var ownerOk=false;try{ownerOk=localStorage.getItem('nl-owner-ok')==='1';}catch(e){}
+  window.claude={use:function(name){
+    if(name==='db')return boot();
+    if(name==='user')return Promise.resolve({canEdit:function(){return Promise.resolve(ownerOk);}});
+    return Promise.reject(new Error('unknown'));
+  }};
+  window.__ownerPin=function(){
+    var p=window.prompt('Код владельца');
+    if(p===null)return false;
+    if(p===OWNER_PIN){try{localStorage.setItem('nl-owner-ok','1');}catch(e){}return true;}
+    return false;
+  };
+})();
+</script>
+<title>NURLIFE — заказы</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: одна колонка до 720px. Сверху фильтры-счётчики по статусам, ниже карточки заявок; заявка открывается на весь экран. */
+:root{
+  --bg:#f3f6fb; --surface:#ffffff; --surface2:#eef2f9; --ink:#101a2b; --muted:#5a6678; --line:#d8e0ec;
+  --accent:#e30613; --accent-ink:#ffffff; --blue:#0b5fd6;
+  --new:#3a4658; --new-bg:#e6ebf4;
+  --wait:#8a5a00; --wait-bg:#fbefc9;
+  --act:#c8050f; --act-bg:#fde3e4;
+  --go:#0b4fc2; --go-bg:#dfeaff;
+  --ok:#1b6b3a; --ok-bg:#d6efdf;
+  --done:#5b6876; --done-bg:#e3e7ec;
+  --bad:#b3261e; --bad-bg:#fbe0dd;
+  --font-display:'Montserrat',system-ui,sans-serif;
+  --font-body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
+  --font-mono:'IBM Plex Mono',ui-monospace,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1220; --surface:#151d2e; --surface2:#1b2538; --ink:#e8edf6; --muted:#9aa8bd; --line:#2a3650;
+    --accent:#ff4753; --accent-ink:#1a0507; --blue:#4a8cff;
+    --new:#b9c4cf; --new-bg:#27313c;
+    --wait:#f0cf73; --wait-bg:#3a3014;
+    --act:#ff8a91; --act-bg:#3d1519;
+    --go:#8db4ff; --go-bg:#14284d;
+    --ok:#7fd3a0; --ok-bg:#16372a;
+    --done:#9aa7b4; --done-bg:#27313c;
+    --bad:#ff9c93; --bad-bg:#3f1d1a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1220; --surface:#151d2e; --surface2:#1b2538; --ink:#e8edf6; --muted:#9aa8bd; --line:#2a3650;
+  --accent:#ff4753; --accent-ink:#1a0507; --blue:#4a8cff;
+  --new:#b9c4cf; --new-bg:#27313c;
+  --wait:#f0cf73; --wait-bg:#3a3014;
+  --act:#ff8a91; --act-bg:#3d1519;
+  --go:#8db4ff; --go-bg:#14284d;
+  --ok:#7fd3a0; --ok-bg:#16372a;
+  --done:#9aa7b4; --done-bg:#27313c;
+  --bad:#ff9c93; --bad-bg:#3f1d1a;
+  color-scheme: dark;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:15px;line-height:1.45;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 110px}
+.app{max-width:720px;margin:0 auto}
+h1,h2,h3,p{margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+.top{display:flex;flex-direction:column;gap:2px;margin-bottom:12px}
+body::before,body::after{content:'';position:fixed;z-index:0;pointer-events:none;width:64px;height:64px}
+body::before{top:0;left:0;background:var(--blue);clip-path:polygon(0 0,100% 0,0 100%)}
+body::after{bottom:0;right:0;background:var(--accent);clip-path:polygon(100% 0,100% 100%,0 100%)}
+.app{position:relative;z-index:1}
+.brand{display:inline-flex;flex-direction:column;align-items:flex-start;width:max-content;max-width:100%;margin-bottom:4px}
+.logo{position:relative;display:flex;align-items:center;gap:3px;font-family:var(--font-display);font-weight:800;font-size:24px;line-height:1;letter-spacing:-.01em;padding:5px 0}
+.logo::before{content:'';position:absolute;left:0;top:0;width:58%;height:3px;border-radius:3px;background:var(--accent)}
+.logo::after{content:'';position:absolute;right:0;bottom:0;width:58%;height:3px;border-radius:3px;background:var(--blue)}
+.logo .nur{color:var(--accent)} .logo .life{color:var(--blue)}
+.logo svg{width:24px;height:24px;flex:0 0 auto}
+.em{font-family:var(--font-display);font-weight:800;font-size:19px;line-height:1;letter-spacing:-.02em;margin-top:2px}
+.em b{color:var(--accent);font-weight:800} .em i{color:var(--blue);font-style:normal}
+.em small{display:block;font-family:var(--font-body);font-weight:500;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:4px}
+.eyebrow{font-family:var(--font-display);font-weight:500;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+h1{font-family:var(--font-display);font-weight:700;font-size:22px;line-height:1.1;text-wrap:balance}
+
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px;margin-bottom:14px;scrollbar-width:thin}
+.chip{flex:0 0 auto;display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);
+  border-radius:999px;padding:7px 8px 7px 14px;cursor:pointer;font-size:14px;white-space:nowrap}
+.chip b{font-family:var(--font-mono);font-weight:500;font-size:13px;min-width:24px;text-align:center;border-radius:999px;padding:1px 6px;background:var(--surface2);color:var(--muted)}
+.chip.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.chip.on b{background:#fff;color:var(--blue)}
+.chip.hot b{background:var(--act-bg);color:var(--act)}
+.chip.on.hot b{background:var(--accent);color:var(--accent-ink)}
+.chip:focus-visible,.btn:focus-visible,.card:focus-visible,.seg button:focus-visible,.link:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.list{display:flex;flex-direction:column;gap:10px}
+.card{display:flex;flex-direction:column;gap:8px;text-align:left;width:100%;background:var(--surface);border:1px solid var(--line);
+  border-radius:10px;padding:13px 14px;cursor:pointer}
+.card:hover{border-color:var(--muted)}
+.card-top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.who{font-weight:600;font-size:16px;min-width:0;overflow-wrap:anywhere}
+.num{font-family:var(--font-mono);font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 6px;margin-right:6px;white-space:nowrap;vertical-align:1px}
+.items{color:var(--muted);font-size:14px;overflow-wrap:anywhere}
+.card-foot{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.due.bad{color:var(--bad);font-weight:500}
+.price{font-family:var(--font-mono);font-size:13px;color:var(--ink)}
+.pill{flex:0 0 auto;font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:.04em;text-transform:uppercase;border-radius:4px;padding:3px 8px;white-space:nowrap}
+.t-submitted{background:var(--surface2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line)}
+.banner{border-color:var(--accent)}
+.badge{background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:0 7px;font-family:var(--font-mono);font-size:12px}
+.irow{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;align-items:center}
+.irow .sub{color:var(--ink);font-size:14px}
+@media (max-width:520px){.irow{grid-template-columns:minmax(0,1fr)}}
+.t-new{background:var(--new-bg);color:var(--new)} .t-sent{background:var(--wait-bg);color:var(--wait)}
+.t-answered{background:var(--act-bg);color:var(--act)} .t-informed{background:var(--wait-bg);color:var(--wait)} .t-paid{background:var(--act-bg);color:var(--act)} .t-ordered{background:var(--go-bg);color:var(--go)}
+.t-arrived{background:var(--ok-bg);color:var(--ok)} .t-issued,.t-cancelled{background:var(--done-bg);color:var(--done)}
+
+.empty{border:1px dashed var(--line);border-radius:10px;padding:28px 18px;text-align:center;color:var(--muted);display:flex;flex-direction:column;gap:10px;align-items:center}
+.empty h2{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--ink)}
+.foot{margin-top:18px;font-size:12px;color:var(--muted)}
+.resetbox{margin-top:28px;padding-top:12px;border-top:1px dashed var(--line);display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.resetbox:empty{display:none}
+.resetbox .btn{font-size:12px;padding:5px 10px;opacity:.75}
+
+.btn{border:1px solid var(--line);background:var(--surface);border-radius:8px;padding:10px 14px;cursor:pointer;font-weight:500}
+.btn:hover{border-color:var(--muted)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}
+.btn.primary:disabled{opacity:.45;cursor:not-allowed}
+.btn.danger{color:var(--bad)}
+.btn.small{padding:6px 10px;font-size:13px}
+.link{background:none;border:0;padding:6px 0;color:var(--accent);cursor:pointer;font-weight:500}
+.fab{position:fixed;right:calc(16px + env(safe-area-inset-right,0px));bottom:calc(16px + env(safe-area-inset-bottom,0px));z-index:5;
+  border:0;border-radius:999px;background:var(--accent);color:var(--accent-ink);font-weight:600;padding:14px 20px;cursor:pointer;
+  box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.fab:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+
+.sheet{position:fixed;inset:0;z-index:20;background:var(--bg);overflow-y:auto;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-top:calc(16px + env(safe-area-inset-top,0px));padding-bottom:calc(40px + env(safe-area-inset-bottom,0px))}
+.sheet-in{max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:18px}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.sec{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.sec h3{font-family:var(--font-display);font-weight:600;font-size:14px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.head-who{font-size:22px;font-weight:600;line-height:1.2;overflow-wrap:anywhere}
+.sub{color:var(--muted);font-size:14px;overflow-wrap:anywhere;user-select:text}
+.lines{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+.lines li{display:flex;justify-content:space-between;gap:12px;border-bottom:1px dashed var(--line);padding-bottom:6px}
+.lines li:last-child{border-bottom:0;padding-bottom:0}
+.lines .q{font-family:var(--font-mono);font-size:13px;white-space:nowrap;color:var(--muted)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+@media (max-width:520px){.grid2{grid-template-columns:minmax(0,1fr)}}
+label.f{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted);min-width:0}
+.inp{width:100%;min-width:0;border:1px solid var(--line);background:var(--surface2);border-radius:8px;padding:10px 12px;color:var(--ink)}
+.inp:focus{outline:2px solid var(--accent);outline-offset:0;border-color:var(--accent)}
+textarea.inp{resize:vertical;min-height:72px}
+.hint{font-size:13px;color:var(--muted)}
+.hint.warn{color:var(--act)}
+.verdict{font-size:14px;padding:10px 12px;border-radius:8px;background:var(--ok-bg);color:var(--ok)}
+.verdict.late{background:var(--bad-bg);color:var(--bad)}
+.verdict.info{background:var(--go-bg);color:var(--go)}
+.steps{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
+.steps li{display:grid;grid-template-columns:18px minmax(0,1fr) auto;gap:8px;align-items:center;padding:3px 0;font-size:13px;color:var(--muted)}
+.steps i{width:10px;height:10px;border-radius:50%;border:2px solid var(--line);display:block;justify-self:center}
+.steps li.done{color:var(--ink)} .steps li.done i{background:var(--ok);border-color:var(--ok)}
+.steps li.now{color:var(--ink);font-weight:600} .steps li.now i{border-color:var(--accent);background:var(--accent-soft,transparent);box-shadow:0 0 0 3px var(--act-bg)}
+.steps time{font-family:var(--font-mono);font-size:11px;color:var(--muted)}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{border:1px solid var(--line);background:var(--surface2);border-radius:999px;padding:5px 12px;font-size:13px;cursor:pointer}
+.me{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:14px;color:var(--muted);margin-top:4px}
+.me b{color:var(--ink);font-weight:600}
+.me:empty{display:none}
+a.btn{display:inline-block;text-decoration:none;text-align:center}
+.wa{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.srow{display:flex;justify-content:space-between;align-items:center;gap:10px;border-bottom:1px dashed var(--line);padding-bottom:8px}
+.srow:last-child{border-bottom:0;padding-bottom:0}
+.srow .nm2{font-weight:600;overflow-wrap:anywhere}
+.srow .ph{font-family:var(--font-mono);font-size:13px;color:var(--muted)}
+.kinds{margin-bottom:12px}
+.kinds button{padding:7px 14px;font-size:14px}
+.seg button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) 72px 92px 38px;gap:8px;align-items:center}
+@media (max-width:520px){.row{grid-template-columns:72px minmax(0,1fr) 38px}.row .nm{grid-column:1/-1}}
+.x{border:1px solid var(--line);background:var(--surface2);border-radius:8px;height:40px;cursor:pointer;color:var(--muted)}
+.actions{display:flex;flex-direction:column;gap:10px}
+.actions .rowb{display:flex;gap:10px;flex-wrap:wrap}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(84px + env(safe-area-inset-bottom,0px));z-index:40;background:var(--ink);color:var(--bg);
+  padding:10px 16px;border-radius:8px;font-size:14px;max-width:calc(100vw - 32px)}
+@media (prefers-reduced-motion:no-preference){.sheet{animation:in .16s ease-out}@keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="top">
+    <div class="brand"><div class="logo"><span class="nur">NUR</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M6.5 12.5l4 4 7.5-9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="life">LIFE</span></div><div class="em"><b>electro</b><i>market</i><small>Электротовары · кабель · инструмент</small></div></div>
+    <h1>Заказы</h1>
+    <div class="me" id="me"></div>
+  </header>
+  <div class="seg kinds" id="kinds" role="group" aria-label="Вид заказа"></div>
+  <nav class="chips" id="chips" aria-label="Фильтр по статусу"></nav>
+  <main class="list" id="list"><div class="empty">Загрузка…</div></main>
+  <p class="foot" id="foot"></p>
+  <div class="resetbox" id="resetbox"></div>
+</div>
+<button class="fab" id="fab" type="button">+ Новая заявка</button>
+<div class="sheet" id="sheet" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(function(){
+'use strict';
+var BRAND='<div class="brand"><div class="logo"><span class="nur">NUR</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M6.5 12.5l4 4 7.5-9" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="life">LIFE</span></div><div class="em"><b>electro</b><i>market</i><small>Электротовары · кабель · инструмент</small></div></div>';
+var LS='viktor-orders-v1', STORE='NURLIFE';
+var UNITS=['шт','м','бухта','кг','уп','счёт'];
+var ALLST=['new','submitted','sent','answered','informed','paid','ordered','arrived','issued'];
+var ST={
+  client:{new:'Новая',submitted:'У менеджера',sent:'Ждём ответа',answered:'Цена у продавца',informed:'Цена у продавца',paid:'Оплачено',ordered:'Заказано',arrived:'Пришло',issued:'Выдано',cancelled:'Отменено'},
+  store:{new:'Новая',submitted:'У менеджера',sent:'Ждём ответа',answered:'Заказать',ordered:'Заказано',arrived:'Пришло',issued:'Принято',cancelled:'Отменено'}
+};
+var STAMP={new:'createdAt',submitted:'submittedAt',sent:'sentAt',answered:'answeredAt',informed:'informedAt',paid:'paidAt',ordered:'orderedAt',arrived:'arrivedAt',issued:'issuedAt'};
+var STEPLABEL={
+  client:{new:'Заявка создана',submitted:'Передана старшему менеджеру',sent:'Запрос цены поставщику',answered:'Поставщик ответил: цена и срок',informed:'Клиент уведомлён о цене и сроке',paid:'Клиент оплатил',ordered:'Заказано у поставщика',arrived:'Товар пришёл в магазин',issued:'Выдан клиенту'},
+  store:{new:'Заявка создана',submitted:'Передана старшему менеджеру',sent:'Запрос цены поставщику',answered:'Поставщик ответил: цена и срок',ordered:'Заказано у поставщика',arrived:'Товар пришёл в магазин',issued:'Принят на склад'}
+};
+var ACTION={
+  client:{new:'Передать старшему менеджеру',sent:'Поставщик ответил',answered:'Клиент оплатил',ordered:'Товар пришёл',arrived:'Выдал клиенту'},
+  store:{new:'Передать старшему менеджеру',sent:'Поставщик ответил',ordered:'Товар пришёл',arrived:'Принял на склад'}
+};
+var LSME='viktor-me-v1';
+function normPhone(v){var d=String(v||'').replace(/\D/g,'');if(d.length===11&&d.charAt(0)==='8')d='7'+d.slice(1);else if(d.length===10)d='7'+d;return d;}
+function fmtPhone(n){return n.length===11?'+'+n.charAt(0)+' '+n.slice(1,4)+' '+n.slice(4,7)+' '+n.slice(7,9)+' '+n.slice(9):'+'+n;}
+function waLink(num,text){return 'https://wa.me/'+(num||'')+'?text='+encodeURIComponent(text);}
+function sumPrice(items){var sum=0,any=false;items.forEach(function(it){if(it.price!=null&&it.price!==''&&!isNaN(Number(it.price))){sum+=Number(it.price);any=true;}});return any?sum:null;}
+function maxEta(items){var m=null;items.forEach(function(it){if(it.eta&&(!m||it.eta>m))m=it.eta;});return m;}
+function readyAnswer(o){return o.items.every(function(it){return Number(it.price)>0&&!!it.eta;});}
+function qtyN(it){var q=Number(String(it.qty).replace(',','.'));return q>0?q:1;}
+function rnd(x){return Math.round(x*100)/100;}
+function unitWord(u){return u==='бухта'?'бухту':u;}
+function itemsTextP(o){return o.items.map(function(it,i){return (i+1)+'. '+it.name+' — '+it.qty+' '+it.unit+(it.up?' × '+money(it.up)+' = '+money(it.price):(it.price?' — '+money(it.price):''))+(it.eta?', до '+fmtLong(parseISO(it.eta)):'');}).join('\n');}
+function priceRows(o){
+  var t=sumPrice(o.items),m=maxEta(o.items);
+  return '<p class="hint">Цена и срок по каждой позиции</p>'+o.items.map(function(it,i){
+    var u=!!it.up;
+    return '<div class="sub"><b>'+esc(it.name)+'</b> · '+esc(it.qty)+' '+esc(it.unit)+'</div>'+
+      '<div class="grid2"><select class="inp" data-imode="'+i+'" aria-label="Как указать цену"><option value="sum"'+(u?'':' selected')+'>Сумма за позицию</option><option value="unit"'+(u?' selected':'')+'>Цена за '+esc(it.unit)+'</option></select>'+
+      '<input class="inp" id="f-ip-'+i+'" data-iprice="'+i+'" type="number" inputmode="decimal" min="0" step="any" value="'+esc(u?it.up:(it.price==null?'':it.price))+'" placeholder="'+(u?'₸ за '+esc(it.unit):'Сумма, ₸')+'" aria-label="Цена"></div>'+
+      '<div class="grid2"><input class="inp" id="f-ie-'+i+'" data-ieta="'+i+'" type="date" value="'+esc(it.eta||'')+'" aria-label="Привезут до"><span class="hint" id="f-sub-'+i+'">'+(u&&it.price?'= '+money(it.price):'')+'</span></div>';
+  }).join('')+'<p class="hint" id="f-total"><b>'+(t!==null?'Итого: '+money(t):(o.price?'Итого: '+money(o.price):'Итого: не указано'))+(m?' · последняя позиция до '+fmtD(parseISO(m)):'')+'</b></p>';
+}
+function numL(o){return String(o.num||'—')+(o.sub?'.'+o.sub:'');}
+function sellerTo(o){return o.createdByPhone?'p:'+normPhone(o.createdByPhone):'sellers';}
+function priceText(o){return (o.price?money(o.price):'цена не указана')+(o.etaDate?', срок до '+fmtLong(parseISO(o.etaDate)):'');}
+function mineN(n){if(mode!=='db'||!me)return false;if(isMgr())return n.to==='manager';return n.to==='p:'+me.phone||n.to==='sellers';}
+function unreadN(n){return !(n.readBy&&meKey&&n.readBy[meKey]);}
+function unreadCount(){return notifs.filter(function(n){return mineN(n)&&unreadN(n);}).length;}
+function notify(to,o,text,kind){
+  if(mode!=='db'||!ncol)return;
+  var now=Date.now();
+  var doc={to:to,orderId:o.id,kind:kind||'',text:text,at:now,by:myName(),readBy:meKey?(function(){var r={};r[meKey]=true;return r;})():{}};
+  var dup=kind==='price'?notifs.filter(function(n){return n.orderId===o.id&&n.kind==='price'&&n.to===to&&n.by===myName()&&now-n.at<120000;})[0]:null;
+  var pr=dup?ncol.doc(dup.id).set(doc):ncol.add(doc);
+  Promise.resolve(pr).catch(function(){});
+}
+var pendN={};
+function afterStatus(o,next){
+  var _n=notify;notify=function(to,oo,text,kind){(pendN[oo.id]=pendN[oo.id]||[]).push([to,oo,text,kind]);};
+  try{afterStatus0(o,next);}finally{notify=_n;}
+}
+function flushN(id){var l=pendN[id];delete pendN[id];if(l)l.forEach(function(a){notify(a[0],a[1],a[2],a[3]);});}
+function afterStatus0(o,next){
+  var lab=numL(o)+(K(o)==='client'&&o.client?' ('+o.client+')':'');
+  if(next==='submitted'){var nt='Новая заявка №'+lab+(K(o)==='store'?' в магазин':'')+' от '+(o.createdBy||myName()||'продавца')+': '+itemsShort(o);notify('manager',o,nt,'new');if(K(o)==='store')notify('sellers',o,nt,'new');}
+  else if(next==='paid')notify('manager',o,'Клиент оплатил заявку №'+lab+'. Можно заказывать.','paid');
+  else if(next==='arrived'&&K(o)==='client')notify(sellerTo(o),o,'Товар по заявке №'+lab+' пришёл в магазин. Сообщите клиенту.','arrived');
+  else if(next==='answered'&&K(o)==='client')notify(sellerTo(o),o,'Менеджер внёс цену и срок по заявке №'+lab+': '+priceText(o)+'. Сообщите клиенту.','answered');
+}
+function priceHook(o,f){
+  if(f!=='price'&&f!=='etaDate')return;
+  var fl=flowOf(o);if(fl.indexOf(o.status)<fl.indexOf('answered'))return;
+  var lab=numL(o)+(K(o)==='client'&&o.client?' ('+o.client+')':'');
+  if(isMgr()){if(K(o)==='client')notify(sellerTo(o),o,'Менеджер изменил цену или срок по заявке №'+lab+': '+priceText(o)+'.','price');}
+  else notify('manager',o,'Продавец '+(myName()||'')+' изменил цену или срок по заявке №'+lab+': '+priceText(o)+'.','price');
+}
+function markRead(n){
+  if(!meKey||!ncol||!unreadN(n))return;
+  var u={};u[meKey]=true;
+  Promise.resolve(ncol.doc(n.id).update({readBy:u})).catch(function(){});
+}
+function myName(){return me?me.name:'';}
+function isMgr(){return !me||me.role!=='seller';}
+function ownerOf(o){
+  if(o.status==='submitted'||o.status==='sent'||o.status==='paid')return 'manager';
+  if(o.status==='answered'&&K(o)==='store')return 'manager';
+  return 'any';
+}
+function canAct(o){return isMgr()||K(o)==='store'||ownerOf(o)!=='manager';}
+function waitText(o){return o.status==='paid'?'Оплата принята. Старший менеджер закажет товар у поставщика.':o.status==='answered'?'Ждёт решения старшего менеджера.':'Ждёт старшего менеджера: он закажет товар у поставщика и внесёт цену и срок.';}
+function prio(o){
+  var P=isMgr()?{submitted:0,paid:0,sent:1,arrived:2,answered:3,new:4,informed:5,ordered:6}:{answered:0,arrived:1,informed:2,new:3,submitted:4,sent:5,paid:6,ordered:7};
+  return P[o.status]==null?9:P[o.status];
+}
+function submittedOrders(){return orders.filter(function(o){return o.status==='submitted';}).sort(function(a,b){return (a.num||0)-(b.num||0);});}
+function needGate(){return mode==='db'&&!me;}
+function resolveMe(){
+  me=null;
+  if(meKey==='owner'){if(isAdmin)me={role:'owner',name:'Владелец'};}
+  else if(meKey){for(var i=0;i<sellers.length;i++){if(sellers[i].id===meKey){me={role:sellers[i].role==='manager'?'manager':sellers[i].role==='owner'?'owner':'seller',name:sellers[i].name||fmtPhone(meKey),phone:meKey};break;}}}
+  if(!me&&sellersReady&&meKey){meKey=null;try{localStorage.removeItem(LSME);}catch(e){}}
+}
+function setMe(k){meKey=k;try{if(k)localStorage.setItem(LSME,k);else localStorage.removeItem(LSME);}catch(e){}resolveMe();}
+function K(o){return o.kind==='store'?'store':'client';}
+function flowOf(o){return K(o)==='store'?['new','submitted','sent','answered','ordered','arrived','issued']:['new','submitted','sent','answered','paid','ordered','arrived','issued'];}
+function normalize(o){if(o.items&&o.items.length===1&&o.price&&o.items[0].price==null){o.items[0].price=o.price;if(o.etaDate&&!o.items[0].eta)o.items[0].eta=o.etaDate;}if(o.kind!=='store'&&o.status==='informed'){o.status='answered';}if(o.kind==='store'&&o.status==='informed'){o.status='ordered';o.orderedAt=o.orderedAt||o.informedAt;}return o;}
+function isOrderable(o){return K(o)==='store'?o.status==='answered':o.status==='paid';}
+function orderableOrders(){return orders.filter(isOrderable).sort(function(a,b){return (a.num||0)-(b.num||0);});}
+var CHIPS=[['active','Все'],['new','Новые'],['submitted','У менеджера'],['sent','Ждём ответа'],['answered','Ждём оплату'],['paid','Оплачено'],['ordered','Едут'],['arrived','Пришло'],['archive','Архив']];
+
+
+var orders=[], mode='loading', col=null, filter='active', kindFilter='client';
+var ncol=null, notifs=[], notifOpen=false, notifsReady=false, knownN={}, answersOpen=false, loginRole='seller', holdSheet=0, batch=null, sellers=[], sellersReady=false, scol=null, isAdmin=false, meKey=null, me=null, managing=false, loginPhone='', sform={name:'',phone:'',role:'seller'}, delSeller=null;
+var pendingOpen=0, openId=null, form=null, msgKind=null, confirmDel=false;
+
+function $(s){return document.querySelector(s);}
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
+function clone(o){return JSON.parse(JSON.stringify(o));}
+
+/* ---------- даты ---------- */
+function startDay(d){var x=new Date(d);x.setHours(0,0,0,0);return x;}
+function dayDiff(a,b){return Math.round((startDay(a)-startDay(b))/864e5);}
+function parseISO(s){var p=s.split('-').map(Number);return new Date(p[0],p[1]-1,p[2]);}
+function fmtD(d){return new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'short'}).replace('.','');}
+function fmtLong(d){return new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'long'});}
+function fmtDT(t){return new Date(t).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});}
+function pl(n,a,b,c){n=Math.abs(n);var m=n%100,k=n%10;return (m>10&&m<20)?c:k===1?a:(k>=2&&k<=4)?b:c;}
+function days(n){return n+' '+pl(n,'день','дня','дней');}
+function money(n){return Number(n).toLocaleString('ru-RU')+' ₸';}
+
+/* ---------- данные ---------- */
+function loadLocal(){try{orders=JSON.parse(localStorage.getItem(LS)||'[]').map(normalize);}catch(e){orders=[];}}
+function saveLocal(){try{localStorage.setItem(LS,JSON.stringify(orders));}catch(e){}}
+function find(id){for(var i=0;i<orders.length;i++){if(orders[i].id===id)return orders[i];}return null;}
+function toast(t){var el=$('#toast');el.textContent=t;el.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(function(){el.hidden=true;},2400);}
+
+async function persist(o){
+  o.updatedAt=Date.now();
+  if(mode==='db'){
+    var oi=orders.findIndex(function(x){return x.id===o.id;});
+    if(oi>=0)orders[oi]=o;else orders.push(o);
+    try{await col.doc(o.id).set(JSON.parse(JSON.stringify(o)));flushN(o.id);}catch(e){delete pendN[o.id];toast('Не удалось сохранить заявку: '+((e&&e.message)||'ошибка')+'. Проверьте доступ (нужен Contributor).');}
+  }else{
+    var i=orders.findIndex(function(x){return x.id===o.id;});
+    if(i<0)orders.push(o);else orders[i]=o;
+    saveLocal();render(false);
+  }
+}
+function mut(id,fn){var cur=find(id);if(!cur)return;var o=clone(cur);fn(o);return persist(o);}
+async function removeOrder(id){
+  if(mode==='db'){try{await col.doc(id).delete();}catch(e){toast('Не удалось удалить');}}
+  else{orders=orders.filter(function(x){return x.id!==id;});saveLocal();render(true);}
+}
+
+async function init(){
+  var db=null;
+  try{if(window.claude&&window.claude.use)db=await window.claude.use('db');}catch(e){db=null;}
+  if(db){
+    mode='db';col=db.collection('orders');scol=db.collection('sellers');
+    try{var us=await window.claude.use('user');isAdmin=!!(us&&await us.canEdit());}catch(e){isAdmin=false;}
+    try{meKey=localStorage.getItem(LSME);}catch(e){meKey=null;}
+    ncol=db.collection('notifs');
+    ncol.orderBy('at','desc').limit(100).onSnapshot(function(snap){
+      var arr=snap.docs.map(function(d){return Object.assign({},d.data()||{},{id:d.id});});
+      if(notifsReady){
+        arr.forEach(function(n){
+          if(!knownN[n.id]&&mineN(n)&&unreadN(n)&&n.by!==myName()){toast(n.text);try{if(navigator.vibrate)navigator.vibrate(200);}catch(e){}}
+        });
+      }
+      arr.forEach(function(n){knownN[n.id]=1;});
+      notifs=arr;notifsReady=true;renderMe();if(notifOpen)render(false);
+    },function(){});
+    scol.onSnapshot(function(snap){
+      sellers=snap.docs.map(function(d){return Object.assign({},d.data()||{},{id:d.id});}).sort(function(a,b){return String(a.name).localeCompare(String(b.name),'ru');});
+      sellersReady=true;resolveMe();render(false);
+    },function(){sellersReady=true;resolveMe();render(false);});
+    col.onSnapshot(function(snap){
+      orders=snap.docs.map(function(d){return normalize(Object.assign({},d.data()||{},{id:d.id}));});
+      render(false);
+    },function(){mode='local';loadLocal();render(true);});
+  }else{
+    mode='local';loadLocal();render(true);
+  }
+}
+
+/* ---------- текст сообщений ---------- */
+function itemsText(o){return (o.invoice?'Счёт на оплату №'+o.invoice+'\n':'')+o.items.filter(function(it){return !it.inv;}).map(function(it,i){return (i+1)+'. '+it.name+' — '+it.qty+' '+it.unit;}).join('\n');}
+function itemsShort(o){return (o.invoice?'счёт №'+o.invoice+(o.items.some(function(it){return !it.inv;})?', ':''):'')+o.items.filter(function(it){return !it.inv;}).map(function(it){return it.name+' ×'+it.qty+' '+it.unit;}).join(', ');}
+function msgText(o,kind){
+  var hi='Здравствуйте'+(o.client?', '+o.client:'')+'!';
+  if(kind==='confirm'){
+    var cp=o.price?money(o.price):'[цена]', cd=o.etaDate?'до '+fmtLong(parseISO(o.etaDate)):'[срок]';
+    return 'Здравствуйте! Магазин «'+STORE+'». Подтверждаем заказ:\n'+itemsText(o)+'\nЦена: '+cp+', срок поставки '+cd+'.\nСпасибо!';
+  }
+  if(kind==='supplier'){
+    return 'Здравствуйте! Магазин «'+STORE+'». Прошу прислать цену и срок поставки:\n'+itemsText(o)+'\n'+(o.note?'Примечание: '+o.note+'\n':'')+'Спасибо!';
+  }
+  if(kind==='client'){
+    var p=o.price?money(o.price):'[цена]', d=o.etaDate?'до '+fmtLong(parseISO(o.etaDate)):'[срок]';
+    if(sumPrice(o.items)!==null)return hi+' По вашему заказу:\n'+itemsTextP(o)+'\nИтого: '+p+(maxEta(o.items)?'':', срок поставки '+d)+'. Для заказа нужна оплата. Подтверждаете?';
+    return hi+' По вашему заказу ('+itemsShort(o)+'): цена '+p+', срок поставки '+d+'. Для заказа нужна оплата. Подтверждаете?';
+  }
+  if(kind==='seller'&&(o.status==='arrived'||o.status==='issued'))return 'Заявка №'+numL(o)+(o.client?' ('+o.client+')':'')+': товар пришёл в магазин:\n'+itemsText(o)+'\nСообщите клиенту.';
+  if(kind==='seller'){
+    if(sumPrice(o.items)!==null)return 'Заявка №'+numL(o)+(o.client?' ('+o.client+')':'')+':\n'+itemsTextP(o)+'\nИтого: '+(maxEta(o.items)?money(sumPrice(o.items)):priceText(o))+'. Сообщите клиенту.';
+    return 'Заявка №'+numL(o)+(o.client?' ('+o.client+')':'')+': '+priceText(o)+'. Сообщите клиенту.';
+  }
+  return hi+' Ваш заказ пришёл в магазин «'+STORE+'», можно забирать:\n'+itemsText(o);
+}
+function kindsFor(o){
+  if(K(o)==='store')return [];
+  if(isMgr())return ['seller'];
+  return ['answered','informed','paid','ordered','arrived','issued'].indexOf(o.status)>=0?['client','arrival']:[];
+}
+function pickKind(o,kinds){
+  var k=(msgKind&&kinds.indexOf(msgKind)>=0)?msgKind:defKind(o);
+  if(!msgKind&&isMgr()&&o.status==='answered'&&kinds.indexOf('seller')>=0)k='seller';
+  if(kinds.indexOf(k)<0)k=kinds[0];
+  return k;
+}
+function kLabel(o,k){
+  if(K(o)==='store')return k==='confirm'?'Поставщику: подтверждение':'Поставщику: запрос';
+  return k==='supplier'?'Поставщику':k==='seller'?'Продавцу: цена и срок':k==='client'?'Клиенту: цена и срок':'Клиенту: пришло';
+}
+function defKind(o){
+  if(K(o)==='store')return (o.status==='answered'||o.status==='ordered')?'confirm':'supplier';
+  if(o.status==='arrived'||o.status==='issued')return 'arrival';
+  if(o.status==='paid'||o.status==='ordered')return 'paid';
+  if(o.status==='answered'||o.status==='informed')return 'client';
+  return 'supplier';
+}
+
+/* ---------- строки состояния ---------- */
+function etaText(o){
+  var d=dayDiff(parseISO(o.etaDate),Date.now());
+  if(d>1)return {t:'Придёт до '+fmtD(parseISO(o.etaDate))+' · через '+days(d),bad:false};
+  if(d===1)return {t:'Придёт завтра',bad:false};
+  if(d===0)return {t:'Срок поставки — сегодня',bad:false};
+  return {t:'Срок вышел '+days(-d)+' назад',bad:true};
+}
+function dueLine(o){
+  var now=Date.now();
+  if(o.status==='new')return {t:'Заявка не отправлена',bad:false};
+  if(o.status==='submitted'){var q=dayDiff(now,o.submittedAt||o.createdAt);return {t:'Передана '+fmtD(o.submittedAt||o.createdAt)+' · ждёт старшего менеджера'+(q>0?' '+days(q):''),bad:q>=2};}
+  if(o.status==='sent'){var n=dayDiff(now,o.sentAt);return {t:'Отправлено '+fmtD(o.sentAt)+' · '+(n>0?'ответа нет '+days(n):'ждём ответа'),bad:n>=2};}
+  if(o.status==='answered')return {t:(o.etaDate?'Срок: до '+fmtD(parseISO(o.etaDate))+' · ':'')+(K(o)==='store'?'пора заказывать':isMgr()?(o.sellerSentAt?'продавец уведомлён '+fmtD(o.sellerSentAt):'отправьте продавцу цену и срок'):'сообщите клиенту'),bad:isMgr()&&K(o)==='client'&&!o.sellerSentAt&&dayDiff(now,o.answeredAt||now)>=1};
+  if(o.status==='informed'){var iw=dayDiff(now,o.informedAt||o.answeredAt||now);return {t:'Клиенту сообщили '+fmtD(o.informedAt||now)+' · ждём оплату'+(iw>0?' '+days(iw):''),bad:iw>=3};}
+  if(o.status==='paid'){var pw=dayDiff(now,o.paidAt||now);return {t:'Оплачено '+fmtD(o.paidAt||now)+' · ждёт заказа у поставщика',bad:pw>=1};}
+  if(o.status==='ordered')return o.etaDate?etaText(o):{t:'Срок не указан',bad:false};
+  if(o.status==='arrived'){var w=dayDiff(now,o.arrivedAt);return {t:'Пришло '+fmtD(o.arrivedAt)+' · '+(K(o)==='store'?(w>0?'не принято '+days(w):'примите на склад'):(w>0?'ждёт выдачи '+days(w):'можно выдавать')),bad:w>=3};}
+  if(o.status==='issued')return {t:(K(o)==='store'?'Принято ':'Выдано ')+fmtD(o.issuedAt),bad:false};
+  return {t:'Отменено',bad:false};
+}
+function verdict(o){
+  if(!o.arrivedAt||!o.etaDate)return null;
+  var d=dayDiff(o.arrivedAt,parseISO(o.etaDate));
+  if(d<0)return {t:'Пришло '+fmtD(o.arrivedAt)+', раньше срока на '+days(-d),late:false};
+  if(d===0)return {t:'Пришло '+fmtD(o.arrivedAt)+', точно в срок',late:false};
+  return {t:'Пришло '+fmtD(o.arrivedAt)+', позже срока на '+days(d),late:true};
+}
+
+/* ---------- список ---------- */
+function isActive(o){return o.status!=='issued'&&o.status!=='cancelled';}
+function matches(o){
+  if(kindFilter!=='all'&&K(o)!==kindFilter)return false;
+  if(filter==='active')return isActive(o);
+  if(filter==='archive')return !isActive(o);
+  return o.status===filter;
+}
+function chipLabel(c){
+  if(c[0]==='submitted')return isMgr()?'К запросу':'У менеджера';
+  if(c[0]==='paid')return isMgr()?'Заказать':'Оплачено';
+  if(c[0]==='answered')return kindFilter==='store'?'Заказать':isMgr()?'Продавцу':kindFilter==='client'?'Сообщить':'Ответили';
+  if(c[0]==='arrived')return 'Пришло';
+  return c[1];
+}
+function whoText(o){return K(o)==='store'?'В магазин':esc(o.client);}
+function renderMain(){
+  var kc={all:0,client:0,store:0};
+  orders.forEach(function(o){if(isActive(o)){kc.all++;kc[K(o)]++;}});
+  $('#kinds').innerHTML=[['all','Все'],['client','Под клиента'],['store','В магазин']].map(function(k){
+    return '<button type="button" data-act="kind" data-v="'+k[0]+'" class="'+(kindFilter===k[0]?'on':'')+'">'+k[1]+' · '+kc[k[0]]+'</button>';
+  }).join('');
+  var counts={active:0,archive:0};
+  ALLST.forEach(function(s){counts[s]=0;});
+  orders.forEach(function(o){
+    if(kindFilter!=='all'&&K(o)!==kindFilter)return;
+    if(isActive(o))counts.active++;else counts.archive++;
+    if(counts[o.status]!==undefined&&o.status!=='issued')counts[o.status]++;
+  });
+  $('#chips').innerHTML=CHIPS.map(function(c){
+    var hot=((isMgr()?(c[0]==='submitted'||c[0]==='sent'||c[0]==='paid'||c[0]==='answered'):(c[0]==='answered'))||c[0]==='arrived')&&counts[c[0]]>0;
+    return '<button type="button" class="chip'+(filter===c[0]?' on':'')+(hot?' hot':'')+'" data-act="chip" data-v="'+c[0]+'">'+chipLabel(c)+'<b>'+(counts[c[0]]||0)+'</b></button>';
+  }).join('');
+
+  var list=orders.filter(matches);
+  if(filter==='archive'){list.sort(function(a,b){return (b.issuedAt||b.cancelledAt||b.updatedAt||0)-(a.issuedAt||a.cancelledAt||a.updatedAt||0);});}
+  else{list.sort(function(a,b){var pa=prio(a),pb=prio(b);return pa-pb||(a.createdAt||0)-(b.createdAt||0);});}
+
+  var el=$('#list');
+  if(mode==='loading'){el.innerHTML='<div class="empty">Загрузка…</div>';return;}
+  if(!list.length){
+    if(!orders.length){
+      el.innerHTML='<div class="empty"><h2>Заказов пока нет</h2><p>Создайте заявку под клиента или в магазин: приложение подскажет текст для поставщика, напомнит про ответ и срок и отметит момент, когда товар пришёл.</p><button class="btn primary" type="button" data-act="new">Создать первую заявку</button></div>';
+    }else{
+      el.innerHTML='<div class="empty"><p>В этом разделе пусто.</p></div>';
+    }
+  }else{
+    el.innerHTML=list.map(function(o){
+      var d=dueLine(o);
+      return '<button type="button" class="card" data-act="open" data-id="'+esc(o.id)+'">'+
+        '<div class="card-top"><div class="who"><span class="num">№ '+esc(numL(o))+'</span>'+whoText(o)+'</div><span class="pill t-'+o.status+'">'+ST[K(o)][o.status]+'</span></div>'+
+        '<div class="items">'+esc(itemsShort(o))+'</div>'+
+        '<div class="card-foot"><span class="due'+(d.bad?' bad':'')+'">'+esc(d.t)+'</span>'+(o.price?'<span class="price">'+esc(money(o.price))+'</span>':'')+'</div></button>';
+    }).join('');
+  }
+  var subN=submittedOrders().length, ordN=orderableOrders().length;
+  if(isMgr()&&!needGate()){
+    var bn='';
+    if(subN>0)bn+='<div class="sec banner"><p><b>'+subN+' '+pl(subN,'заявка ждёт','заявки ждут','заявок ждут')+' запроса цены у поставщиков</b></p><div><button class="btn primary" type="button" data-act="batch" data-mode="inquiry">Запросить цену у поставщиков</button></div></div>';
+    if(ordN>0)bn+='<div class="sec banner"><p><b>'+ordN+' '+pl(ordN,'заявка готова','заявки готовы','заявок готовы')+' к заказу: клиенты оплатили</b></p><div><button class="btn primary" type="button" data-act="batch" data-mode="order">Заказать у поставщиков</button></div></div>';
+    var answN=answerOrders().length,tellN=tellOrders().length;
+    if(answN+tellN>0)bn+='<div class="sec banner"><p><b>'+(answN?answN+' '+pl(answN,'заявка ждёт','заявки ждут','заявок ждут')+' ответа поставщика':'')+(answN&&tellN?'. ':'')+(tellN?tellN+' '+pl(tellN,'заявку','заявки','заявок')+' нужно передать продавцу':'')+'</b></p><div><button class="btn primary" type="button" data-act="answers">Ответы поставщиков</button></div></div>';
+    if(bn)el.insertAdjacentHTML('afterbegin',bn);
+  }
+  $('#foot').textContent=mode==='db'
+    ?'Заказы общие: их видят все, кто открыл эту страницу.'
+    :'Заказы хранятся только в этом браузере и на этом устройстве.';
+  var rb=$('#resetbox');
+  if(rb){
+    if(me&&me.role==='owner')rb.innerHTML=resetAsk?'<span>Удалить ВСЕ заявки и уведомления? Это нельзя отменить.</span><button class="btn small danger" type="button" data-act="resetyes">Да, сбросить</button><button class="btn small" type="button" data-act="resetno">Отмена</button>':'<button class="btn small" type="button" data-act="reset">Сбросить все заявки</button>';
+    else rb.innerHTML='';
+  }
+}
+var resetAsk=false;
+async function resetAll(){
+  if(!me||me.role!=='owner')return;
+  if(mode==='db'){
+    try{
+      await Promise.all(orders.map(function(o){return col.doc(o.id).delete();}).concat(notifs.map(function(n){return ncol.doc(n.id).delete();})));
+      orders=[];notifs=[];toast('Все заявки сброшены');
+    }catch(e){toast('Не удалось сбросить: нужны права редактора');}
+  }else{orders=[];saveLocal();toast('Все заявки сброшены');}
+  resetAsk=false;openId=null;filter='active';render(true);
+}
+
+/* ---------- карточка заявки ---------- */
+function sheetDetail(o){
+  var idx=flowOf(o).indexOf(o.status), cancelled=o.status==='cancelled';
+  var kinds=kindsFor(o), kind=pickKind(o,kinds);
+  var d=dueLine(o), vd=verdict(o);
+  var canNext=!cancelled&&idx>=0&&idx<flowOf(o).length-1;
+  var blocked=(o.status==='sent'&&!readyAnswer(o));
+  var h='<div class="sheet-in">';
+  h+='<div class="bar"><button class="link" type="button" data-act="close">← К списку</button><button class="btn small" type="button" data-act="edit">Изменить позиции</button></div>';
+  h+='<div class="sec"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><p class="sub"><span class="num">№ '+esc(numL(o))+'</span>создана '+esc(fmtDT(o.createdAt)+(o.createdBy?' · продавец '+o.createdBy:'')+(o.enteredBy&&o.enteredBy!==o.createdBy?' · внёс '+o.enteredBy:''))+'</p><p class="head-who">'+whoText(o)+'</p>'+(o.phone&&K(o)==='client'&&!(me&&me.role==='manager')?'<p class="sub">'+esc(o.phone)+'</p>':'')+'</div><span class="pill t-'+o.status+'">'+ST[K(o)][o.status]+'</span></div>';
+  h+='<p class="hint'+(d.bad?' warn':'')+'">'+esc(d.t)+'</p>';
+  if(vd)h+='<p class="verdict'+(vd.late?' late':'')+'">'+esc(vd.t)+'</p>';
+  h+='<ul class="lines">'+o.items.map(function(it){return '<li><span>'+esc(it.name)+(it.supplier?' <span class="hint">· '+esc(it.supplier)+'</span>':'')+'</span><span class="q">'+esc(it.qty)+' '+esc(it.unit)+'</span></li>';}).join('')+'</ul>';
+  if(o.invoice)h+='<p class="hint"><b>Счёт на оплату № '+esc(o.invoice)+'</b></p>';
+  if(o.note)h+='<p class="hint">Примечание: '+esc(o.note)+'</p>';
+  h+='</div>';
+
+  /* действие */
+  if(canNext&&!canAct(o))h+='<p class="verdict info">'+waitText(o)+'</p>';
+  else if(canNext&&(o.status==='submitted'||isOrderable(o)))h+='<div class="actions"><button class="btn primary" type="button" data-act="batch" data-mode="'+(o.status==='submitted'?'inquiry':'order')+'" data-id="'+esc(o.id)+'">'+(o.status==='submitted'?'Запросить цену у поставщиков':'Заказать у поставщика')+'</button></div>';
+  else if(canNext){
+    h+='<div class="actions"><button class="btn primary" id="advbtn" type="button" data-act="advance"'+(blocked?' disabled':'')+'>'+ACTION[K(o)][o.status]+'</button>';
+    if(o.status==='sent')h+='<p class="hint warn" id="blockhint"'+(blocked?'':' hidden')+'>Чтобы отметить ответ, укажите цену и срок поставки ниже.</p>';
+    h+='</div>';
+  }
+  if(o.status==='issued')h+='<p class="verdict info">'+(K(o)==='store'?'Товар принят на склад ':'Заказ выдан клиенту ')+esc(fmtDT(o.issuedAt))+'.</p>';
+  if(cancelled)h+='<div class="actions"><p class="verdict late">Заказ отменён'+(o.cancelledAt?' '+esc(fmtDT(o.cancelledAt)):'')+'.</p><button class="btn" type="button" data-act="restore">Вернуть в работу</button></div>';
+
+  /* ответ поставщика */
+  var mg=isMgr()||K(o)==='store', dis='', multi=true;
+  if(mg||o.price||o.etaDate||['answered','informed','paid','ordered','arrived'].indexOf(o.status)>=0){
+    h+='<div class="sec"><h3>Ответ поставщика</h3><div class="grid2">'+
+      (mg?'<label class="f">Поставщик<input class="inp" id="f-supplier" data-field="supplier" list="suppliers" value="'+esc(o.supplier||'')+'" placeholder="Кому отправили"></label>':'')+
+      (multi?'':'<label class="f">Цена, ₸<input class="inp" id="f-price" data-field="price" type="number" inputmode="decimal" min="0" value="'+esc(o.price||'')+'" placeholder="Общая сумма"'+dis+'></label>')+
+      (multi?'':'<label class="f">Привезут до<input class="inp" id="f-eta" data-field="etaDate" type="date" value="'+esc(o.etaDate||'')+'"'+dis+'></label>')+
+      '</div>'+(multi?priceRows(o):'')+(o.priceBy?'<p class="hint">Цену и срок менял: '+esc(o.priceBy)+', '+esc(fmtDT(o.priceAt))+'</p>':'')+(mg?'<label class="f">Комментарий<textarea class="inp" id="f-comment" data-field="comment" placeholder="Предоплата, условия, номер заказа у поставщика">'+esc(o.comment||'')+'</textarea></label>':'')+
+      '<datalist id="suppliers">'+suppliers().map(function(s){return '<option value="'+esc(s)+'">';}).join('')+'</datalist></div>';
+  }
+
+  /* готовый текст */
+  if(kinds.length){
+    var txt=msgText(o,kind);
+    h+='<div class="sec"><h3>'+(kinds.length===1&&kinds[0]==='seller'?'Быстрый ответ продавцу':'Готовый текст')+'</h3>'+(kinds.length>1?'<div class="seg">'+
+      kinds.map(function(k){return '<button type="button" data-act="msg" data-v="'+k+'" class="'+(kind===k?'on':'')+'">'+kLabel(o,k)+'</button>';}).join('')+
+      '</div>':'')+'<textarea class="inp" id="msgbox" rows="6">'+esc(txt)+'</textarea>'+waBlock(o,kind,txt)+'</div>';
+  }
+
+  /* этапы */
+  h+='<div class="sec"><h3>Этапы</h3><ol class="steps">'+flowOf(o).filter(function(s){return s!=='new'||o.status==='new';}).map(function(s,i){
+    var t=o[STAMP[s]];var cls=t?'done':'';if(!cancelled&&s===o.status)cls='now';
+    return '<li class="'+cls+'"><i></i><span>'+STEPLABEL[K(o)][s]+'</span><time>'+(t?esc(fmtDT(t)+(o.who&&o.who[s]?' · '+o.who[s]:'')):'')+'</time></li>';
+  }).join('')+'</ol></div>';
+
+  /* прочее */
+  h+='<div class="actions"><div class="rowb">';
+  if(idx>0&&!cancelled&&(isMgr()||K(o)==='store'||o.status==='submitted'))h+='<button class="btn small" type="button" data-act="back">Вернуть на шаг назад</button>';
+  if(!cancelled&&o.status!=='issued')h+='<button class="btn small danger" type="button" data-act="cancel">'+(K(o)==='store'?'Отменить заказ':'Клиент отказался')+'</button>';
+  if(isMgr()||K(o)==='store'||o.status==='new')h+=confirmDel?'<button class="btn small danger" type="button" data-act="delete">Точно удалить?</button>':'<button class="btn small" type="button" data-act="confirmdel">Удалить заявку</button>';
+  h+='</div></div></div>';
+  return h;
+}
+function suppliers(){
+  var seen={},out=[];
+  orders.forEach(function(o){var s=(o.supplier||'').trim();if(s&&!seen[s.toLowerCase()]){seen[s.toLowerCase()]=1;out.push(s);}});
+  return out;
+}
+
+/* ---------- форма ---------- */
+function itemRow(it,i){
+  return '<div class="row"><input class="inp nm" data-it="'+i+'" data-k="name" placeholder="Название, марка, сечение" value="'+esc(it.name)+'">'+
+    '<input class="inp" data-it="'+i+'" data-k="qty" type="number" inputmode="decimal" min="0" step="any" value="'+esc(it.qty)+'" aria-label="Количество">'+
+    '<select class="inp" data-it="'+i+'" data-k="unit" aria-label="Единица">'+UNITS.map(function(u){return '<option'+(u===it.unit?' selected':'')+'>'+u+'</option>';}).join('')+'</select>'+
+    '<button class="x" type="button" data-act="delrow" data-i="'+i+'" aria-label="Убрать позицию">×</button></div>';
+}
+function sheetForm(){
+  var h='<div class="sheet-in"><div class="bar"><button class="link" type="button" data-act="closeform">← Назад</button></div>';
+  h+='<h2 class="head-who">'+(form.id?'Изменить заявку':'Новая заявка')+'</h2>';
+  h+='<p class="hint">Заявку вносит: <b>'+esc(myName()||'—')+'</b></p>';
+  if(sellers.length){
+    var so=(form.seller===''?[['','Не указан']]:[]).concat(sellers.map(function(x){return [x.id,x.name+(x.role==='manager'?' (менеджер)':'')];}));
+    h+='<div class="sec"><label class="f">Продавец заявки<select class="inp" id="g-seller" data-g="seller">'+so.map(function(r){return '<option value="'+esc(r[0])+'"'+(form.seller===r[0]?' selected':'')+'>'+esc(r[1])+'</option>';}).join('')+'</select></label><p class="hint">Этому продавцу придут уведомления о цене и сроке по заявке.</p></div>';
+  }
+  if(!form.id)h+='<div class="seg kinds">'+[['client','Под клиента'],['store','В магазин']].map(function(k){return '<button type="button" data-act="setkind" data-v="'+k[0]+'" class="'+(form.kind===k[0]?'on':'')+'">'+k[1]+'</button>';}).join('')+'</div>';
+  if(form.kind==='client')h+='<div class="sec"><div class="grid2"><label class="f">Клиент<input class="inp" id="g-client" data-g="client" value="'+esc(form.client)+'" placeholder="Имя клиента"></label>'+
+    '<label class="f">Телефон<input class="inp" id="g-phone" data-g="phone" type="tel" inputmode="tel" value="'+esc(form.phone)+'" placeholder="+7 777 123 45 67"></label></div></div>';
+  if(isMgr()||form.kind==='store')h+='<div class="sec"><label class="f">Поставщик<input class="inp" id="g-supplier" data-g="supplier" list="suppliers2" value="'+esc(form.supplier)+'" placeholder="Кому отправим заявку"></label>'+
+    '<datalist id="suppliers2">'+suppliers().map(function(s){return '<option value="'+esc(s)+'">';}).join('')+'</datalist></div>';
+  h+='<div class="sec"><label class="f">Номер счёта на оплату (если заказ по счёту)<input class="inp" id="g-invoice" data-g="invoice" value="'+esc(form.invoice||'')+'" placeholder="Например, 125"></label><p class="hint">Можно указать только номер счёта, без позиций, или номер счёта вместе с позициями.</p></div>';
+  h+='<div class="sec"><h3>'+(form.kind==='store'?'Позиции в магазин':'Позиции под заказ')+'</h3>'+form.items.map(itemRow).join('')+'<div><button class="btn small" type="button" data-act="addrow">+ Ещё позиция</button></div></div>';
+  h+='<div class="sec"><label class="f">Примечание для поставщика<textarea class="inp" id="g-note" data-g="note" placeholder="Нужна накладная, самовывоз, срочно">'+esc(form.note)+'</textarea></label></div>';
+  h+='<div class="actions"><button class="btn primary" type="button" data-act="saveform" data-submit="'+(form.id?'':'1')+'">'+(form.id?'Сохранить':(isMgr()?'Создать и добавить в заказ':'Создать и передать менеджеру'))+'</button>'+(form.id?'':'<button class="btn" type="button" data-act="saveform">Сохранить как черновик</button>')+'</div></div>';
+  return h;
+}
+function blankForm(k){return {id:null,seller:(me&&me.phone)?me.phone:'',kind:k||'client',client:'',phone:'',supplier:'',note:'',invoice:'',items:[{name:'',qty:'1',unit:'шт'}]};}
+
+/* ---------- вход и продавцы ---------- */
+function renderMe(){
+  var el=$('#me');
+  if(!me){el.innerHTML='';try{document.title='NURLIFE — заказы';}catch(e){}return;}
+  var c=unreadCount();
+  try{document.title=(c?'('+c+') ':'')+'NURLIFE — заказы';}catch(e){}
+  el.innerHTML='<span>Вы вошли: <b>'+esc(me.name)+'</b></span>'+(mode==='db'?'<button class="link" type="button" data-act="bell">Уведомления'+(c?' <span class="badge">'+c+'</span>':'')+'</button>':'')+(me.role==='owner'?'<button class="link" type="button" data-act="sellers">Продавцы</button>':'')+'<button class="link" type="button" data-act="logout">Выйти</button>';
+}
+function sheetNotifs(){
+  var list=notifs.filter(mineN);
+  var h='<div class="sheet-in"><div class="bar"><button class="link" type="button" data-act="closenotif">← Назад</button><button class="btn small" type="button" data-act="readall">Прочитать все</button></div><h2 class="head-who">Уведомления</h2>';
+  if(!list.length)return h+'<div class="empty"><p>Пока ничего нет. Здесь появятся '+(isMgr()?'новые заявки, оплаты и правки цены и срока от продавцов.':'цены и сроки от менеджера и его правки.')+'</p></div></div>';
+  return h+list.map(function(n){
+    var u=unreadN(n);
+    return '<button type="button" class="card" data-act="nopen" data-id="'+esc(n.id)+'"><div class="card-top"><div class="who" style="font-weight:'+(u?600:400)+'">'+(u?'● ':'')+esc(n.text)+'</div></div><div class="card-foot"><span>'+esc(fmtDT(n.at))+(n.by?' · '+esc(n.by):'')+'</span></div></button>';
+  }).join('')+'</div>';
+}
+function sheetLogin(){
+  var h='<div class="sheet-in"><div class="top">'+BRAND+'<h1>Вход для продавцов</h1></div>';
+  if(!sellersReady)return h+'<div class="empty">Загрузка…</div></div>';
+  h+='<div class="seg kinds">'+[['seller','Продавец'],['manager','Старший менеджер']].map(function(r){return '<button type="button" data-act="lrole" data-v="'+r[0]+'" class="'+(loginRole===r[0]?'on':'')+'">'+r[1]+'</button>';}).join('')+'</div>';
+  h+='<div class="sec"><label class="f">Номер телефона<input class="inp" id="l-phone" data-l="1" type="tel" inputmode="tel" autocomplete="tel" value="'+esc(loginPhone)+'" placeholder="+7 777 123 45 67"></label>'+
+     '<button class="btn primary" type="button" data-act="login">Войти</button>';
+  if(!sellers.length)h+='<p class="hint">Список пуст. Владелец добавляет продавцов и менеджера кнопкой «Продавцы».</p>';
+  h+='</div>';
+  if(isAdmin||window.STANDALONE)h+='<div class="sec"><h3>Владелец</h3><div class="wa"><button class="btn" type="button" data-act="owner">Войти как владелец</button><button class="btn" type="button" data-act="sellers">Продавцы</button></div></div>';
+  return h+'</div>';
+}
+function sheetSellers(){
+  var h='<div class="sheet-in"><div class="bar"><button class="link" type="button" data-act="closesellers">← Назад</button></div><h2 class="head-who">Продавцы</h2>';
+  h+='<div class="sec"><h3>Добавить продавца</h3><div class="grid2">'+
+    '<label class="f">Имя<input class="inp" id="s-name" data-s="name" value="'+esc(sform.name)+'" placeholder="Например, Виктор"></label>'+
+    '<label class="f">Номер телефона<input class="inp" id="s-phone" data-s="phone" type="tel" inputmode="tel" value="'+esc(sform.phone)+'" placeholder="+7 777 123 45 67"></label>'+
+    '<label class="f">Должность<select class="inp" id="s-role" data-s="role"><option value="seller"'+(sform.role!=='manager'?' selected':'')+'>Продавец</option><option value="manager"'+(sform.role==='manager'?' selected':'')+'>Старший менеджер</option><option value="owner"'+(sform.role==='owner'?' selected':'')+'>Владелец</option></select></label></div>'+
+    '<div><button class="btn primary" type="button" data-act="addseller">Добавить</button></div></div>';
+  h+='<div class="sec"><h3>Список ('+sellers.length+')</h3>';
+  if(!sellers.length)h+='<p class="hint">Пока никого нет.</p>';
+  h+=sellers.map(function(x){
+    return '<div class="srow"><div><div class="nm2">'+esc(x.name)+'</div><div class="ph">'+esc(fmtPhone(x.id))+' · '+(x.role==='manager'?'старший менеджер':x.role==='owner'?'владелец':'продавец')+'</div></div>'+
+      '<button class="btn small danger" type="button" data-act="delseller" data-id="'+esc(x.id)+'">'+(delSeller===x.id?'Точно удалить?':'Удалить')+'</button></div>';
+  }).join('')+'</div>';
+  h+='<p class="hint">Чтобы продавец мог открыть страницу, дайте ему доступ в меню «Поделиться» (уровень «Участник»). Вход по номеру определяет, кто что делает; код из СМС не проверяется. Чтобы изменить должность, добавьте номер ещё раз.</p></div>';
+  return h;
+}
+function doLogin(){
+  var n=normPhone(loginPhone);
+  var found=sellers.filter(function(x){return x.id===n;})[0];
+  if(!found){toast('Номера нет в списке. Попросите владельца добавить вас.');return;}
+  var fr=found.role==='manager'?'manager':found.role==='owner'?'owner':'seller';
+  if(fr!=='owner'&&fr!==loginRole){toast(fr==='manager'?'Этот номер добавлен как старший менеджер. Выберите «Старший менеджер».':'Этот номер добавлен как продавец. Выберите «Продавец».');return;}
+  setMe(n);loginPhone='';render(true);
+}
+function waBlock(o,kind,txt){
+  var toClient=(kind==='client'||kind==='paid'||kind==='arrival'), toSeller=(kind==='seller');
+  var h='<div class="wa"><button class="btn small" type="button" data-act="copy">Копировать</button>';
+  if(toClient||toSeller){
+    var n=normPhone(toSeller?o.createdByPhone:o.phone), whom=toSeller?'продавцу':'клиенту';
+    if(n.length>=11)h+='<a class="btn primary small" id="walink" data-kind="'+kind+'" data-num="'+esc(n)+'" target="_blank" rel="noopener" href="'+esc(waLink(n,txt))+'">Написать '+whom+' в WhatsApp</a></div><p class="hint">Откроется чат с '+esc(fmtPhone(n))+' и готовым текстом. Отправить нужно кнопкой в WhatsApp.</p>';
+    else if(toSeller)h+='<a class="btn primary small" id="walink" data-kind="seller" data-num="" target="_blank" rel="noopener" href="'+esc(waLink('',txt))+'">Открыть в WhatsApp</a></div><p class="hint warn">К заявке не привязан продавец: выберите контакт в WhatsApp или привяжите продавца через «Изменить позиции».</p>';
+    else h+='</div><p class="hint warn">Чтобы писать '+whom+', добавьте номер: «Изменить позиции».</p>';
+  }else{
+    h+='<a class="btn primary small" id="walink" data-num="" target="_blank" rel="noopener" href="'+esc(waLink('',txt))+'">Открыть в WhatsApp</a></div><p class="hint">В WhatsApp выберите группу или контакт поставщика.</p>';
+  }
+  return h;
+}
+function updateWa(){
+  var a=$('#walink'),box=$('#msgbox');
+  if(a&&box)a.href=waLink(a.getAttribute('data-num')||'',box.value);
+}
+
+/* ---------- ответы поставщиков ---------- */
+function answerOrders(){return orders.filter(function(o){return o.status==='sent';}).sort(function(a,b){return (a.num||0)-(b.num||0)||(a.sub||0)-(b.sub||0);});}
+function tellOrders(){return orders.filter(function(o){return o.status==='answered'&&K(o)==='client'&&!o.sellerSentAt;}).sort(function(a,b){return (a.num||0)-(b.num||0)||(a.sub||0)-(b.sub||0);});}
+function answerCard(o){
+  var t=sumPrice(o.items),m=maxEta(o.items);
+  var h='<div class="sec"><p><b>№ '+esc(numL(o))+' · '+whoText(o)+'</b>'+(o.createdBy?' <span class="hint">· продавец '+esc(o.createdBy)+'</span>':'')+'</p>';
+  o.items.forEach(function(it,i){
+    var u=!!it.up;
+    h+='<div class="sub"><b>'+esc(it.name)+'</b> · '+esc(it.qty)+' '+esc(it.unit)+'</div>'+
+      '<div class="grid2"><select class="inp" data-oid="'+esc(o.id)+'" data-imode="'+i+'" aria-label="Как указать цену"><option value="sum"'+(u?'':' selected')+'>Сумма за позицию</option><option value="unit"'+(u?' selected':'')+'>Цена за '+esc(it.unit)+'</option></select>'+
+      '<input class="inp" data-oid="'+esc(o.id)+'" data-iprice="'+i+'" type="number" inputmode="decimal" min="0" step="any" value="'+esc(u?it.up:(it.price==null?'':it.price))+'" placeholder="'+(u?'₸ за '+esc(it.unit):'Сумма, ₸')+'" aria-label="Цена"></div>'+
+      '<div class="grid2"><input class="inp" data-oid="'+esc(o.id)+'" data-ieta="'+i+'" type="date" value="'+esc(it.eta||'')+'" aria-label="Привезут до"><span class="hint" id="a-sub-'+esc(o.id)+'-'+i+'">'+(u&&it.price?'= '+money(it.price):'')+'</span></div>';
+  });
+  h+='<p class="hint" id="a-tot-'+esc(o.id)+'"><b>'+(t!==null?'Итого: '+money(t):'Итого: не указано')+(m?' · последняя позиция до '+fmtD(parseISO(m)):'')+'</b></p>'+
+     '<div><button class="btn primary" id="a-btn-'+esc(o.id)+'" type="button" data-act="adone" data-id="'+esc(o.id)+'"'+(readyAnswer(o)?'':' disabled')+'>Готово: ответ поставщика получен</button></div></div>';
+  return h;
+}
+function updateAnswerRow(o){
+  if(!o)return;
+  o.items.forEach(function(it,i){var sb=$('#a-sub-'+o.id+'-'+i);if(sb)sb.textContent=(it.up&&it.price)?'= '+money(it.price):'';});
+  var tt=sumPrice(o.items),mm=maxEta(o.items),te=$('#a-tot-'+o.id);
+  if(te)te.innerHTML='<b>'+(tt!==null?'Итого: '+money(tt):'Итого: не указано')+(mm?' · последняя позиция до '+fmtD(parseISO(mm)):'')+'</b>';
+  var bt=$('#a-btn-'+o.id);if(bt)bt.disabled=!readyAnswer(o);
+}
+function sheetAnswers(){
+  var h='<div class="sheet-in"><div class="bar"><button class="link" type="button" data-act="closeanswers">← Назад</button></div><h2 class="head-who">Ответы поставщиков</h2>';
+  var wait=answerOrders(),tell=tellOrders();
+  if(!wait.length&&!tell.length)return h+'<div class="empty"><p>Сейчас нет заявок, которые ждут ответа поставщика или сообщения продавцу.</p></div></div>';
+  if(wait.length){
+    h+='<p class="hint">Впишите цену и срок из ответа поставщика. Когда все позиции заполнены, нажмите «Готово»: заявка перейдёт к блоку «Сообщить продавцу» ниже.</p>';
+    var groups={},order=[];
+    wait.forEach(function(o){var k=(o.supplier||'').trim()||'Поставщик не указан';if(!groups[k]){groups[k]=[];order.push(k);}groups[k].push(o);});
+    order.forEach(function(k){h+='<h3 class="sub" style="margin-top:6px"><b>Поставщик: '+esc(k)+'</b></h3>'+groups[k].map(answerCard).join('');});
+  }
+  if(tell.length){
+    h+='<h3 class="sub" style="margin-top:10px"><b>Сообщить продавцу цену и срок</b></h3>';
+    tell.forEach(function(o){
+      var txt=msgText(o,'seller'),n=normPhone(o.createdByPhone);
+      h+='<div class="sec"><p><b>№ '+esc(numL(o))+' · '+whoText(o)+'</b>'+(o.createdBy?' <span class="hint">· продавец '+esc(o.createdBy)+'</span>':'')+'</p><p class="hint" style="white-space:pre-wrap">'+esc(txt)+'</p>'+
+        '<div><a class="btn primary small" data-kind="seller" data-oid="'+esc(o.id)+'" target="_blank" rel="noopener" href="'+esc(waLink(n.length>=11?n:'',txt))+'">'+(n.length>=11?'Написать '+esc(o.createdBy||'продавцу')+' в WhatsApp':'Открыть в WhatsApp')+'</a></div>'+(n.length>=11?'':'<p class="hint warn">Продавец не привязан: выберите контакт в WhatsApp сами.</p>')+'</div>';
+    });
+  }
+  return h+'</div>';
+}
+
+/* ---------- заказ поставщику ---------- */
+function batchSource(){return batch.mode==='order'?orderableOrders():submittedOrders();}
+function bKey(o,i){return o.id+'|'+i;}
+function bSup(o,i){var v=batch.sup[bKey(o,i)];if(v===undefined)v=o.items[i].supplier||o.supplier||'';return String(v).trim();}
+function batchGroups(){
+  var map={},order=[],missing=[];
+  batchSource().forEach(function(o){
+    if(!batch.ids[o.id])return;
+    o.items.forEach(function(it,i){
+      var sp=bSup(o,i);
+      if(!sp){missing.push({o:o,i:i});return;}
+      var k=sp.toLowerCase();
+      if(!map[k]){map[k]={name:sp,items:[]};order.push(k);}
+      map[k].items.push({o:o,i:i});
+    });
+  });
+  return {groups:order.map(function(k){return map[k];}),missing:missing};
+}
+function groupText(g){
+  var lines=[],seen={},ord=batch.mode==='order';
+  g.items.forEach(function(x,n){var it=x.o.items[x.i];lines.push((n+1)+'. '+(it.inv?'Заказ по счёту на оплату №'+(x.o.invoice||''):it.name+' — '+it.qty+' '+it.unit)+(ord&&it.price?' — '+money(it.price):'')+(ord&&it.eta?', до '+fmtLong(parseISO(it.eta)):'')+' (заявка №'+numL(x.o)+')');});
+  g.items.forEach(function(x){
+    if(seen[x.o.id])return;seen[x.o.id]=1;
+    if(x.o.note)lines.push('   Примечание к заявке №'+numL(x.o)+': '+x.o.note);
+    if(ord&&(x.o.price||x.o.etaDate))lines.push('   По заявке №'+numL(x.o)+': '+(x.o.price?'цена '+money(x.o.price):'')+(x.o.price&&x.o.etaDate?', ':'')+(x.o.etaDate?'срок до '+fmtLong(parseISO(x.o.etaDate)):''));
+  });
+  return 'Здравствуйте! Магазин «'+STORE+'». '+(ord?'Подтверждаем заказ. Прошу поставить:':'Прошу прислать цену и срок поставки:')+'\n'+lines.join('\n')+'\nСпасибо!';
+}
+function sheetBatch(){
+  var list=batchSource();
+  var h='<div class="sheet-in"><div class="bar"><button class="link" type="button" data-act="closebatch">← Назад</button></div><h2 class="head-who">'+(batch.mode==='order'?'Заказ поставщикам':'Запрос цены поставщикам')+'</h2>';
+  if(!list.length)return h+'<div class="empty"><p>'+(batch.mode==='order'?'Нет оплаченных заявок для заказа.':'Нет заявок, переданных менеджеру.')+'</p></div></div>';
+  h+='<div class="sec"><h3>Какие заявки включить</h3>'+list.map(function(o){
+    return '<label class="srow" style="cursor:pointer"><span style="display:flex;gap:10px;align-items:flex-start;min-width:0"><input type="checkbox" data-bid="'+esc(o.id)+'"'+(batch.ids[o.id]?' checked':'')+' style="margin-top:4px"><span style="min-width:0"><b>№ '+esc(numL(o))+' · '+whoText(o)+'</b><br><span class="sub">'+esc(itemsShort(o))+'</span></span></span><span class="sub" style="white-space:nowrap">'+esc(fmtD(o.submittedAt||o.createdAt)+(o.createdBy?' · '+o.createdBy:''))+'</span></label>';
+  }).join('')+'</div>';
+  var sel=list.filter(function(o){return batch.ids[o.id];});
+  var dl='<datalist id="suppliers3">'+suppliers().map(function(x){return '<option value="'+esc(x)+'">';}).join('')+'</datalist>';
+  if(sel.length){
+    h+='<div class="sec"><h3>Поставщик для каждой позиции</h3><div class="irow"><input class="inp" id="b-all" data-ball="1" list="suppliers3" value="'+esc(batch.all)+'" placeholder="Один поставщик на все позиции"><div><button class="btn small" type="button" data-act="ballsup">Всем позициям</button></div></div>';
+    sel.forEach(function(o){
+      h+='<p class="sub" style="margin-top:6px"><b>№ '+esc(numL(o))+' · '+whoText(o)+'</b></p>';
+      o.items.forEach(function(it,i){
+        h+='<div class="irow"><span class="sub">'+esc(it.name)+' · '+esc(it.qty)+' '+esc(it.unit)+'</span><input class="inp" data-bi="'+esc(bKey(o,i))+'" list="suppliers3" value="'+esc(bSup(o,i))+'" placeholder="Поставщик"></div>';
+      });
+    });
+    h+=dl+'</div>';
+  }else h+='<p class="hint">Отметьте заявки, которые нужно заказать.</p>';
+  var bg=batchGroups();
+  if(bg.missing.length)h+='<p class="hint warn">Не указан поставщик у '+bg.missing.length+' '+pl(bg.missing.length,'позиции','позиций','позиций')+': они останутся у менеджера.</p>';
+  bg.groups.forEach(function(g,gi){
+    var txt=groupText(g);
+    h+='<div class="sec"><h3>Поставщик: '+esc(g.name)+' · '+g.items.length+' '+pl(g.items.length,'позиция','позиции','позиций')+'</h3><textarea class="inp" id="b-text-'+gi+'" rows="8">'+esc(txt)+'</textarea>'+
+      '<div class="wa"><button class="btn small" type="button" data-act="copy" data-t="#b-text-'+gi+'">Копировать</button><a class="btn primary small" id="b-wa-'+gi+'" target="_blank" rel="noopener" href="'+esc(waLink('',txt))+'">Открыть в WhatsApp</a></div>'+
+      '<p class="hint">В WhatsApp выберите чат или группу этого поставщика и отправьте текст. Потом отметьте отправку.</p>'+
+      '<button class="btn primary" type="button" data-act="sendgroup" data-gi="'+gi+'">'+(batch.mode==='order'?'Заказал у':'Отправил запрос')+' «'+esc(g.name)+'»</button></div>';
+  });
+  return h+'</div>';
+}
+function sendGroup(gi){
+  var bg=batchGroups(),g=bg.groups[gi];if(!g)return;
+  var tgt=batch.mode==='order'?'ordered':'sent',stamp=STAMP[tgt];
+  var now=Date.now(),byOrder={},subs={};
+  orders.forEach(function(o){if(o.sub&&(subs[o.num]||0)<o.sub)subs[o.num]=o.sub;});
+  g.items.forEach(function(x){(byOrder[x.o.id]=byOrder[x.o.id]||{o:x.o,idx:[]}).idx.push(x.i);});
+  Object.keys(byOrder).forEach(function(id){
+    var e=byOrder[id],o=e.o;
+    var mine=e.idx.map(function(i){var it=clone(o.items[i]);it.supplier=g.name;return it;});
+    var who=Object.assign({},o.who||{});if(myName())who[tgt]=myName();
+    var keep=o.items.map(function(it,i){var sx=bSup(o,i);var c=clone(it);if(sx&&e.idx.indexOf(i)<0)c.supplier=sx;return c;});
+    Object.keys(batch.sup).forEach(function(k){if(k.indexOf(o.id+'|')===0)delete batch.sup[k];});
+    if(e.idx.length===o.items.length){
+      mut(o.id,function(x){x.items=mine;x.status=tgt;x[stamp]=now;x.supplier=g.name;x.who=who;});
+    }else{
+      var rest=keep.filter(function(it,i){return e.idx.indexOf(i)<0;});
+      var child=clone(o);child.id=uid();child.items=mine;var cp=sumPrice(mine);if(cp!==null)child.price=cp;var ce=maxEta(mine);if(ce)child.etaDate=ce;child.status=tgt;child[stamp]=now;child.supplier=g.name;child.who=who;child.parentId=o.id;
+      subs[o.num]=(subs[o.num]||0)+1;child.sub=subs[o.num];
+      persist(child);
+      mut(o.id,function(x){x.items=rest;var rp=sumPrice(rest);if(rp!==null)x.price=rp;var re=maxEta(rest);if(re)x.etaDate=re;});
+    }
+  });
+  toast((tgt==='ordered'?'Заказано у ':'Запрос отправлен: ')+g.name);
+  var left=batchGroups();
+  if(!left.groups.length&&!left.missing.length){batch=null;if(tgt==='sent'){answersOpen=true;toast('Запрос отправлен. Когда поставщик ответит, впишите цену и срок здесь.');}}
+  render(true);
+}
+
+/* ---------- отрисовка ---------- */
+function render(force){
+  renderMain();renderMe();
+  var el=$('#sheet');
+  var gate=needGate();
+  $('#fab').hidden=gate;
+  var ae0=document.activeElement;
+  var typing=!el.hidden&&ae0&&el.contains(ae0)&&/INPUT|TEXTAREA|SELECT/.test(ae0.tagName);
+  if(gate||managing||batch||notifOpen||answersOpen){
+    var tag=managing?'sellers':gate?'login':notifOpen?'notifs':answersOpen?'answers':'batch';
+    if(!force&&typing&&el.getAttribute('data-v')===tag)return;
+    el.setAttribute('data-v',tag);
+    el.innerHTML=managing?sheetSellers():gate?sheetLogin():notifOpen?sheetNotifs():answersOpen?sheetAnswers():sheetBatch();
+    el.hidden=false;document.body.style.overflow='hidden';return;
+  }
+  el.removeAttribute('data-v');
+  if(!force&&openId&&!form&&!el.hidden&&Date.now()-holdSheet<1500)return;
+  if(!openId&&!form){el.hidden=true;el.innerHTML='';document.body.style.overflow='';return;}
+  var ae=document.activeElement;
+  if(!force&&!el.hidden&&(form||(ae&&el.contains(ae)&&/INPUT|TEXTAREA|SELECT/.test(ae.tagName))))return;
+  var top=el.scrollTop;
+  if(form){el.innerHTML=sheetForm();}
+  else{
+    var o=find(openId);
+    if(!o){
+      if(pendingOpen&&Date.now()-pendingOpen<5000){el.innerHTML='<div class="sheet-in"><div class="empty">Сохраняем…</div></div>';el.hidden=false;return;}
+      openId=null;el.hidden=true;el.innerHTML='';document.body.style.overflow='';return;
+    }
+    pendingOpen=0;
+    el.innerHTML=sheetDetail(o);
+  }
+  el.hidden=false;el.scrollTop=top;document.body.style.overflow='hidden';
+}
+
+/* ---------- действия ---------- */
+function advance(id){
+  var before=find(id),prev=before?before.status:'';
+  mut(id,function(o){
+    var fl=flowOf(o),i=fl.indexOf(o.status);if(i<0||i>=fl.length-1)return;
+    var next=fl[i+1];o.status=next;o[STAMP[next]]=Date.now();afterStatus(o,next);o.who=o.who||{};if(myName())o.who[next]=myName();
+  });
+  var o2=find(id);
+  msgKind=null;
+  var guide=false;
+  if(o2){
+    var moved=!matches(o2);
+    if(moved||(filter!=='active'&&filter!=='archive'&&filter!==o2.status))filter='active';
+    if(isMgr()&&prev==='sent'&&o2.status==='answered'&&K(o2)==='client'){msgKind='seller';guide=!answersOpen;toast(answersOpen?'Готово. Теперь сообщите продавцу ниже.':'Цена и срок внесены. Отправьте ответ продавцу кнопкой ниже. Заявка осталась в списке «Все».');}
+    else if(moved)toast('Заявка №'+numL(o2)+' теперь «'+ST[K(o2)][o2.status]+'». Она в списке «Все».');
+  }
+  render(true);
+  if(guide)setTimeout(function(){var m=$('#msgbox');if(m&&m.scrollIntoView)m.scrollIntoView({block:'center'});},60);
+}
+function goBack(id){
+  mut(id,function(o){
+    var fl=flowOf(o),i=fl.indexOf(o.status);if(i<=0)return;
+    o[STAMP[o.status]]=null;o.status=fl[i-1];
+  });
+  msgKind=null;render(true);
+}
+function saveForm(submit){
+  var items=form.items.map(function(it){
+    var x=Object.assign({},it,{name:String(it.name).trim(),qty:it.qty===''?'1':String(it.qty),unit:it.unit});
+    if(x.up)x.price=rnd(x.up*qtyN(x));
+    return x;
+  }).filter(function(it){return it.name&&!it.inv;});
+  var inv=String(form.invoice||'').trim();
+  if(!items.length&&inv){var old0=form.id?find(form.id):null,oi0=old0&&old0.items.filter(function(i){return i.inv;})[0];items=[Object.assign({},oi0||{},{name:'Позиции по счёту №'+inv,qty:'1',unit:'счёт',inv:true})];}
+  if(form.kind==='client'&&!form.client.trim()){toast('Укажите клиента');var c=$('#g-client');if(c)c.focus();return;}
+  if(form.kind==='client'&&normPhone(form.phone).length<11){toast('Укажите номер клиента полностью, чтобы писать ему в WhatsApp');var ph=$('#g-phone');if(ph)ph.focus();return;}
+  if(!items.length){toast('Добавьте позицию или номер счёта');return;}
+  var data={kind:form.kind,client:form.kind==='client'?form.client.trim():'',phone:form.kind==='client'?form.phone.trim():'',supplier:form.supplier.trim(),note:form.note.trim(),invoice:inv,items:items};
+  var spr=sumPrice(items);if(spr!==null){data.price=spr;data.etaDate=maxEta(items)||data.etaDate||null;}
+  var sl=sellers.filter(function(x){return x.id===form.seller;})[0];
+  if(form.id){
+    mut(form.id,function(o){Object.assign(o,data);if(sl){o.createdBy=sl.name;o.createdByPhone=sl.id;}});
+    openId=form.id;
+  }else{
+    var max=0;orders.forEach(function(o){if((o.num||0)>max)max=o.num;});
+    var o={id:uid(),num:max+1,status:'new',createdAt:Date.now(),createdBy:myName()};
+    Object.assign(o,data);
+    o.enteredBy=myName();
+    if(sl){o.createdBy=sl.name;o.createdByPhone=sl.id;}else if(me&&me.phone)o.createdByPhone=me.phone;
+    if(submit){o.status='submitted';o.submittedAt=Date.now();if(myName())o.who={submitted:myName()};afterStatus(o,'submitted');}
+    persist(o);openId=o.id;msgKind=null;pendingOpen=Date.now();
+  }
+  form=null;render(true);
+}
+
+document.addEventListener('click',function(e){
+  var wl=e.target.closest&&e.target.closest('a[data-kind=seller]');
+  var wid=wl&&(wl.getAttribute('data-oid')||openId);
+  if(wl&&wid){mut(wid,function(o){o.sellerSentAt=Date.now();});}
+  var t=e.target.closest('[data-act]');if(!t)return;
+  holdSheet=0;
+  var a=t.getAttribute('data-act');
+  if(a==='chip'){filter=t.getAttribute('data-v');render(false);}
+  else if(a==='login'){doLogin();}
+  else if(a==='lrole'){loginRole=t.getAttribute('data-v');render(true);}
+  else if(a==='reset'){resetAsk=true;render(false);}
+  else if(a==='resetno'){resetAsk=false;render(false);}
+  else if(a==='resetyes'){resetAll();}
+  else if(a==='bell'){notifOpen=true;batch=null;answersOpen=false;openId=null;render(true);}
+  else if(a==='answers'){answersOpen=true;batch=null;openId=null;render(true);}
+  else if(a==='closeanswers'){answersOpen=false;render(true);}
+  else if(a==='adone'){advance(t.getAttribute('data-id'));}
+  else if(a==='closenotif'){notifOpen=false;render(true);}
+  else if(a==='readall'){notifs.filter(function(n){return mineN(n)&&unreadN(n);}).forEach(markRead);toast('Все уведомления прочитаны');}
+  else if(a==='nopen'){
+    var nn=notifs.filter(function(x){return x.id===t.getAttribute('data-id');})[0];
+    if(nn){markRead(nn);if(find(nn.orderId)){openId=nn.orderId;msgKind=null;}else{toast('Загружаю заявку…');Promise.resolve(col.doc(nn.orderId).get()).then(function(d){if(d&&d.exists){if(!find(nn.orderId))orders.push(normalize(Object.assign({},d.data(),{id:nn.orderId})));openId=nn.orderId;msgKind=null;}else toast('Заявка удалена');render(true);}).catch(function(){toast('Не удалось загрузить заявку');});}}
+    notifOpen=false;render(true);
+  }
+  else if(a==='batch'){
+    batch={mode:t.getAttribute('data-mode')==='order'?'order':'inquiry',ids:{},sup:{},all:''};var pid=t.getAttribute('data-id');
+    if(pid)batch.ids[pid]=true;else batchSource().forEach(function(o){batch.ids[o.id]=true;});
+    openId=null;render(true);
+  }
+  else if(a==='closebatch'){batch=null;render(true);}
+  else if(a==='sendgroup'){t.disabled=true;sendGroup(Number(t.getAttribute('data-gi')));}
+  else if(a==='ballsup'){
+    var av=batch.all.trim();if(!av){toast('Впишите поставщика');return;}
+    batchSource().forEach(function(o){if(batch.ids[o.id])o.items.forEach(function(it,i){batch.sup[bKey(o,i)]=av;});});
+    render(true);
+  }
+  else if(a==='logout'){setMe(null);openId=null;form=null;render(true);}
+  else if(a==='owner'){if(!isAdmin&&window.STANDALONE){if(window.__ownerPin&&window.__ownerPin()){isAdmin=true;}else{toast('Неверный код владельца');return;}}setMe('owner');render(true);}
+  else if(a==='sellers'){managing=true;delSeller=null;render(true);}
+  else if(a==='closesellers'){managing=false;render(true);}
+  else if(a==='addseller'){
+    var nm=sform.name.trim(),pn=normPhone(sform.phone);
+    if(!nm){toast('Укажите имя');return;}
+    if(pn.length<11){toast('Укажите номер полностью, например +7 777 123 45 67');return;}
+    scol.doc(pn).set({name:nm,phone:pn,role:(sform.role==='manager'||sform.role==='owner')?sform.role:'seller',createdAt:Date.now()}).then(function(){sform={name:'',phone:'',role:'seller'};toast('Продавец добавлен');render(true);},function(){toast('Не удалось добавить: нужны права владельца');});
+  }
+  else if(a==='delseller'){
+    var sid=t.getAttribute('data-id');
+    if(delSeller!==sid){delSeller=sid;render(true);return;}
+    delSeller=null;scol.doc(sid).delete().then(function(){toast('Продавец удалён');},function(){toast('Не удалось удалить');});render(true);
+  }
+  else if(a==='kind'){kindFilter=t.getAttribute('data-v');render(false);}
+  else if(a==='setkind'){form.kind=t.getAttribute('data-v');render(true);}
+  else if(a==='new'){form=blankForm(kindFilter==='store'?'store':'client');openId=null;render(true);}
+  else if(a==='open'){openId=t.getAttribute('data-id');msgKind=null;confirmDel=false;form=null;render(true);var s=$('#sheet');s.scrollTop=0;}
+  else if(a==='close'){openId=null;confirmDel=false;render(true);}
+  else if(a==='closeform'){form=null;render(true);}
+  else if(a==='edit'){var o=find(openId);if(o){form={id:o.id,seller:o.createdByPhone?normPhone(o.createdByPhone):'',kind:K(o),client:o.client||'',phone:o.phone||'',supplier:o.supplier||'',note:o.note||'',invoice:o.invoice||'',items:(function(a){return a.length?a:[{name:'',qty:'1',unit:'шт'}];})(clone(o.items).filter(function(it){return !it.inv;}))};render(true);}}
+  else if(a==='addrow'){form.items.push({name:'',qty:'1',unit:'шт'});render(true);var ins=document.querySelectorAll('#sheet .nm');if(ins.length)ins[ins.length-1].focus();}
+  else if(a==='delrow'){if(form.items.length>1){form.items.splice(Number(t.getAttribute('data-i')),1);render(true);}}
+  else if(a==='saveform'){saveForm(t.getAttribute('data-submit')==='1');}
+  else if(a==='advance'){advance(openId);}
+  else if(a==='back'){goBack(openId);}
+  else if(a==='cancel'){mut(openId,function(o){o.prevStatus=o.status;o.status='cancelled';o.cancelledAt=Date.now();});render(true);}
+  else if(a==='restore'){mut(openId,function(o){o.status=o.prevStatus||'new';o.cancelledAt=null;});render(true);}
+  else if(a==='confirmdel'){confirmDel=true;render(true);}
+  else if(a==='delete'){var id=openId;openId=null;confirmDel=false;removeOrder(id);render(true);toast('Заявка удалена');}
+  else if(a==='msg'){msgKind=t.getAttribute('data-v');render(true);}
+  else if(a==='copy'){
+    var ta=$(t.getAttribute('data-t')||'#msgbox');if(!ta)return;
+    var done=function(){toast('Текст скопирован');};
+    var fail=function(){ta.focus();ta.select();toast('Текст выделен, скопируйте вручную');};
+    try{navigator.clipboard.writeText(ta.value).then(done,fail);}catch(err){fail();}
+  }
+});
+$('#fab').addEventListener('click',function(){form=blankForm(kindFilter==='store'?'store':'client');openId=null;render(true);});
+
+/* правки полей без перерисовки */
+document.addEventListener('input',function(e){
+  var t=e.target;
+  if(t.hasAttribute('data-l')){loginPhone=t.value;return;}
+  if(t.hasAttribute('data-s')){sform[t.getAttribute('data-s')]=t.value;return;}
+  if(t.id==='msgbox'){updateWa();return;}
+  if(batch&&t.hasAttribute('data-ball')){batch.all=t.value;return;}
+  if(batch&&t.hasAttribute('data-bi')){batch.sup[t.getAttribute('data-bi')]=t.value;return;}
+  if(t.id&&t.id.indexOf('b-text-')===0){var bw=$('#b-wa-'+t.id.slice(7));if(bw)bw.href=waLink('',t.value);return;}
+  if(!form)return;
+  if(t.hasAttribute('data-g')){form[t.getAttribute('data-g')]=t.value;}
+  else if(t.hasAttribute('data-it')){form.items[Number(t.getAttribute('data-it'))][t.getAttribute('data-k')]=t.value;}
+});
+document.addEventListener('change',function(e){
+  var t=e.target;
+  if(batch&&t.hasAttribute('data-bid')){batch.ids[t.getAttribute('data-bid')]=t.checked;render(true);return;}
+  if(batch&&t.hasAttribute('data-bi')){batch.sup[t.getAttribute('data-bi')]=t.value;render(true);return;}
+  if(form&&t.hasAttribute('data-it')){form.items[Number(t.getAttribute('data-it'))][t.getAttribute('data-k')]=t.value;return;}
+  var oid=(t.getAttribute&&t.getAttribute('data-oid'))||openId;
+  if(oid&&t.hasAttribute&&(t.hasAttribute('data-iprice')||t.hasAttribute('data-ieta')||t.hasAttribute('data-imode'))){
+    var c2=find(oid);if(!c2)return;
+    holdSheet=Date.now();
+    var kind2=t.hasAttribute('data-iprice')?'p':t.hasAttribute('data-ieta')?'e':'m';
+    var its=clone(c2.items),ix=Number(t.getAttribute(kind2==='p'?'data-iprice':kind2==='e'?'data-ieta':'data-imode'));
+    var it2=its[ix],q=qtyN(it2);
+    if(kind2==='m'){
+      if(t.value==='unit'){if(it2.price){it2.up=rnd(it2.price/q);}else{it2.up=0;delete it2.price;}if(!it2.up)delete it2.up;it2.pm='u';}
+      else{delete it2.up;delete it2.pm;}
+    }else if(kind2==='p'){
+      if(t.value===''){delete it2.price;delete it2.up;}
+      else if(it2.pm==='u'||it2.up){it2.pm='u';it2.up=Number(t.value);it2.price=rnd(it2.up*q);}
+      else it2.price=Number(t.value);
+    }else{if(t.value==='')delete it2.eta;else it2.eta=t.value;}
+    var fl2={items:its,price:sumPrice(its),etaDate:maxEta(its)||null,updatedAt:Date.now()};
+    if(myName()){fl2.priceBy=myName();fl2.priceAt=Date.now();}
+    Object.assign(c2,fl2);
+    priceHook(Object.assign({},c2),'price');
+    if(mode==='db'){Promise.resolve(col.doc(oid).update(fl2)).catch(function(){toast('Не удалось сохранить');});}
+    else saveLocal();
+    if(kind2==='m'){render(true);return;}
+    if(t.getAttribute('data-oid'))updateAnswerRow(c2);else refreshDetail();return;
+  }
+  var f=t.getAttribute&&t.getAttribute('data-field');
+  if(!f||!openId)return;
+  var oo0=find(openId);if(!isMgr()&&!(oo0&&K(oo0)==='store')&&f!=='price'&&f!=='etaDate')return;
+  var v=t.value;
+  holdSheet=Date.now();
+  var cur=find(openId);if(!cur)return;
+  var fields={};
+  if(f==='price')fields.price=v===''?null:Number(v);else fields[f]=v;
+  if((f==='price'||f==='etaDate')&&myName()){fields.priceBy=myName();fields.priceAt=Date.now();}
+  fields.updatedAt=Date.now();
+  Object.assign(cur,fields);
+  priceHook(Object.assign({},cur),f);
+  if(mode==='db'){Promise.resolve(col.doc(openId).update(fields)).catch(function(){toast('Не удалось сохранить');});}
+  else saveLocal();
+  refreshDetail();
+});
+function refreshDetail(){
+  var cur=find(openId);if(!cur)return;
+  var o=Object.assign({},cur);
+  var pr=$('#f-price'),et=$('#f-eta');
+  if(pr)o.price=pr.value===''?null:Number(pr.value);
+  if(document.querySelector('[data-iprice]')){
+    o.price=sumPrice(o.items);o.etaDate=maxEta(o.items);
+    o.items.forEach(function(it,i){var sb=$('#f-sub-'+i);if(sb)sb.textContent=(it.up&&it.price)?'= '+money(it.price):'';});
+    var ft=$('#f-total');if(ft)ft.innerHTML='<b>'+(o.price!==null?'Итого: '+money(o.price):'Итого: не указано')+(o.etaDate?' · последняя позиция до '+fmtD(parseISO(o.etaDate)):'')+'</b>';
+  }
+  var blocked=(o.status==='sent'&&!readyAnswer(o));
+  var b=$('#advbtn'),hint=$('#blockhint');
+  if(b)b.disabled=blocked;
+  if(hint)hint.hidden=!blocked;
+  var ks=kindsFor(o),box=$('#msgbox');if(box&&ks.length){box.value=msgText(o,pickKind(o,ks));updateWa();}
+}
+document.addEventListener('keydown',function(e){
+  if(e.key==='Enter'&&e.target&&e.target.id==='l-phone'){doLogin();return;}
+  if(e.key==='Escape'){if(managing){managing=false;render(true);}else if(notifOpen){notifOpen=false;render(true);}else if(answersOpen){answersOpen=false;render(true);}else if(batch){batch=null;render(true);}else if(form){form=null;render(true);}else if(openId){openId=null;render(true);}}
+});
+
+init();
+})();
+</script>
+</body></html>
